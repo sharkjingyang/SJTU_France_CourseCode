@@ -22,23 +22,52 @@ class MNISTDiffusion(nn.Module):
         self.register_buffer("sqrt_alphas_cumprod",torch.sqrt(alphas_cumprod))
         self.register_buffer("sqrt_one_minus_alphas_cumprod",torch.sqrt(1.-alphas_cumprod))
 
+        ##神经网络建模
         self.model=Unet(timesteps,time_embedding_dim,in_channels,in_channels,base_dim,dim_mults)
 
+    def _forward_diffusion(self,x_0,t,noise):
+        assert x_0.shape==noise.shape
+        ##前向过程
+        return self.sqrt_alphas_cumprod.gather(-1,t).reshape(x_0.shape[0],1,1,1)*x_0+ \
+                self.sqrt_one_minus_alphas_cumprod.gather(-1,t).reshape(x_0.shape[0],1,1,1)*noise
+
     def forward(self,x,noise):
-        # x:NCHW
+        ##预测噪声
         t=torch.randint(0,self.timesteps,(x.shape[0],)).to(x.device)
         x_t=self._forward_diffusion(x,t,noise)
         pred_noise=self.model(x_t,t)
-
         return pred_noise
 
+
+    @torch.no_grad()
+    def _reverse_diffusion(self,x_t,t,noise):
+        '''
+        p(x_{t-1}|x_{t})-> mean,std
+        pred_noise-> pred_mean and pred_std
+        单步反向过程
+        '''
+        pred=self.model(x_t,t)
+        alpha_t=self.alphas.gather(-1,t).reshape(x_t.shape[0],1,1,1)
+        alpha_t_cumprod=self.alphas_cumprod.gather(-1,t).reshape(x_t.shape[0],1,1,1)
+        beta_t=self.betas.gather(-1,t).reshape(x_t.shape[0],1,1,1)
+        sqrt_one_minus_alpha_cumprod_t=self.sqrt_one_minus_alphas_cumprod.gather(-1,t).reshape(x_t.shape[0],1,1,1)
+        mean=(1./torch.sqrt(alpha_t))*(x_t-((1.0-alpha_t)/sqrt_one_minus_alpha_cumprod_t)*pred)
+        if t.min()>0:
+            alpha_t_cumprod_prev=self.alphas_cumprod.gather(-1,t-1).reshape(x_t.shape[0],1,1,1)
+            std=torch.sqrt(beta_t*(1.-alpha_t_cumprod_prev)/(1.-alpha_t_cumprod))
+        else:
+            std=0.0
+        return mean+std*noise 
+    
     @torch.no_grad()
     def sampling(self,n_samples,clipped_reverse_diffusion=True,device="cuda"):
+        '''
+        反向过程，即采样
+        '''
         x_t=torch.randn((n_samples,self.in_channels,self.image_size,self.image_size)).to(device)
         for i in tqdm(range(self.timesteps-1,-1,-1),desc="Sampling"):
             noise=torch.randn_like(x_t).to(device)
             t=torch.tensor([i for _ in range(n_samples)]).to(device)
-
             if clipped_reverse_diffusion:
                 x_t=self._reverse_diffusion_with_clip(x_t,t,noise)
             else:
@@ -55,11 +84,6 @@ class MNISTDiffusion(nn.Module):
 
         return betas
 
-    def _forward_diffusion(self,x_0,t,noise):
-        assert x_0.shape==noise.shape
-        #q(x_{t}|x_{t-1})
-        return self.sqrt_alphas_cumprod.gather(-1,t).reshape(x_0.shape[0],1,1,1)*x_0+ \
-                self.sqrt_one_minus_alphas_cumprod.gather(-1,t).reshape(x_0.shape[0],1,1,1)*noise
 
 
     @torch.no_grad()
