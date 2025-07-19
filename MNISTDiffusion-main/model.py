@@ -3,6 +3,10 @@ import torch
 import math
 from unet import Unet
 from tqdm import tqdm
+from torchvision.utils import save_image
+from PIL import Image
+import matplotlib.pyplot as plt
+
 
 class MNISTDiffusion(nn.Module):
     def __init__(self,image_size,in_channels,time_embedding_dim=256,timesteps=1000,base_dim=32,dim_mults= [1, 2, 4, 8]):
@@ -72,10 +76,38 @@ class MNISTDiffusion(nn.Module):
                 x_t=self._reverse_diffusion_with_clip(x_t,t,noise)
             else:
                 x_t=self._reverse_diffusion(x_t,t,noise)
-
         x_t=(x_t+1.)/2. #[-1,1] to [0,1]
-
         return x_t
+    
+
+    @torch.no_grad()
+    def sampling_process(self,n_samples,clipped_reverse_diffusion=True,device="cuda"):
+        '''
+        反向过程，即采样
+        '''
+        x_t=torch.randn((n_samples,self.in_channels,self.image_size,self.image_size)).to(device)
+        for i in tqdm(range(self.timesteps-1,-1,-1),desc="Sampling"):
+            noise=torch.randn_like(x_t).to(device)
+            t=torch.tensor([i for _ in range(n_samples)]).to(device)
+            if clipped_reverse_diffusion:
+                x_t=self._reverse_diffusion_with_clip(x_t,t,noise)
+            else:
+                x_t=self._reverse_diffusion(x_t,t,noise)
+            
+            if (i+1)%100==0 or i==0:
+                plot_x_t=(x_t+1.)/2.
+                save_image(plot_x_t,"results/steps_{:0>8}.png".format(i),nrow=int(math.sqrt(n_samples)))
+                img = Image.open("results/steps_{:0>8}.png".format(i))
+                plt.imshow(img)
+                plt.axis("off")  # 不显示坐标轴
+                plt.show()
+                
+        x_t=(x_t+1.)/2. #[-1,1] to [0,1]
+        return x_t
+
+ 
+
+
     
     def _cosine_variance_schedule(self,timesteps,epsilon= 0.008):
         steps=torch.linspace(0,timesteps,steps=timesteps+1,dtype=torch.float32)

@@ -81,32 +81,35 @@ def main(args):
         model.load_state_dict(ckpt["model"])
 
     global_steps=0
-    for i in range(args.epochs):
-        model.train()
-        for j,(image,target) in enumerate(train_dataloader):
-            noise=torch.randn_like(image).to(device)
-            image=image.to(device)
-            pred=model(image,noise)
-            loss=loss_fn(pred,noise)
-            loss.backward()
-            optimizer.step()
-            optimizer.zero_grad()
-            scheduler.step()
-            if global_steps%args.model_ema_steps==0:
-                model_ema.update_parameters(model)
-            global_steps+=1
-            if j%args.log_freq==0:
-                print("Epoch[{}/{}],Step[{}/{}],loss:{:.5f},lr:{:.5f}".format(i+1,args.epochs,j,len(train_dataloader),
-                                                                    loss.detach().cpu().item(),scheduler.get_last_lr()[0]))
-        ckpt={"model":model.state_dict(),
-                "model_ema":model_ema.state_dict()}
+    # for i in range(args.epochs):
+    #     model.train()
+    #     for j,(image,target) in enumerate(train_dataloader):
+    #         noise=torch.randn_like(image).to(device)
+    #         image=image.to(device)
+    #         pred=model(image,noise)
+    #         loss=loss_fn(pred,noise) ##2-norm Loss
+    #         loss.backward()
+    #         optimizer.step()
+    #         optimizer.zero_grad()
+    #         scheduler.step()
+    #         if global_steps%args.model_ema_steps==0:
+    #             model_ema.update_parameters(model)
+    #         global_steps+=1
+    #         if j%args.log_freq==0:
+    #             print("Epoch[{}/{}],Step[{}/{}],loss:{:.5f},lr:{:.5f}".format(i+1,args.epochs,j,len(train_dataloader),
+    #                                                                 loss.detach().cpu().item(),scheduler.get_last_lr()[0]))
+    #     ckpt={"model":model.state_dict(),
+    #             "model_ema":model_ema.state_dict()}
 
-        os.makedirs("results",exist_ok=True)
-        torch.save(ckpt,"results/steps_{:0>8}.pt".format(global_steps))
+    #     os.makedirs("results",exist_ok=True)
+    #     torch.save(ckpt,"results/steps_{:0>8}.pt".format(global_steps))
 
-        model_ema.eval()
-        samples=model_ema.module.sampling(args.n_samples,clipped_reverse_diffusion=not args.no_clip,device=device)
-        save_image(samples,"results/steps_{:0>8}.png".format(global_steps),nrow=int(math.sqrt(args.n_samples)))
+    #     model_ema.eval()
+    #     samples=model_ema.module.sampling(args.n_samples,clipped_reverse_diffusion=not args.no_clip,device=device)
+    #     save_image(samples,"results/steps_{:0>8}.png".format(global_steps),nrow=int(math.sqrt(args.n_samples)))
+    model_ema.eval()
+    samples=model_ema.module.sampling(args.n_samples,clipped_reverse_diffusion=not args.no_clip,device=device)
+    save_image(samples,"results/steps_{:0>8}.png".format(global_steps),nrow=int(math.sqrt(args.n_samples)))
 
 if __name__=="__main__":
     args=parse_args()
