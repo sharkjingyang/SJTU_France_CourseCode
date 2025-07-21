@@ -170,6 +170,8 @@ if __name__ == "__main__":
     parser.add_argument("--desired_class", type=str, default='all')
     parser.add_argument("--train_progress_bar", action='store_true', default=False)
     parser.add_argument("--warmup", type=int, default=500)
+    parser.add_argument("--infer", action='store_true', default=False)
+
     # EDM models parameters
     parser.add_argument('--gt_guide_type', default='l2', type=str, help='gt_guide_type loss type')
     parser.add_argument('--sigma_min', default=0.002, type=float, help='sigma_min')
@@ -299,54 +301,68 @@ if __name__ == "__main__":
     train_loss_values = 0
     if config.train_progress_bar:
         progress_bar = tqdm(total=config.num_steps)
-    for step in range(config.num_steps):
-        optimizer.zero_grad()
-        batch_loss = torch.tensor(0.0, device=device)
-        # accumulation steps
-        for _ in range(config.accumulation_steps):
-            try:
-                batch, label_dic = next(data_iterator)
-            except:
-                data_iterator = iter(dataloader)
-                batch, label_dic = next(data_iterator)
-            batch = batch.to(device)
-            loss = edm.train_step(batch)
-            loss /= (config.accumulation_steps)
-            loss.backward()
-            batch_loss += loss
-        # Update weights.
-        for g in optimizer.param_groups:
-            g['lr'] = config.learning_rate * min(step / config.warmup, 1)
-        for param in unet.parameters():
-            if param.grad is not None:
-                torch.nan_to_num(param.grad, nan=0, posinf=1e5, neginf=-1e5, out=param.grad)
-        optimizer.step()
-        train_loss_values += (batch_loss.detach().item())
-        ## Update EMA.
-        edm.update_ema()
-        ## Update state
-        if config.train_progress_bar:
-            logs = {"loss": loss.detach().item()}
-            progress_bar.update(1) 
-            progress_bar.set_postfix(**logs)
-        ## log
-        if step % config.log_step == 0 or step == config.num_steps - 1:
-            current_lr = optimizer.param_groups[0]['lr']
-            logger.info(f'step: {step:08d}, current lr: {current_lr:0.6f} average loss: {train_loss_values/(step+1):0.10f}; batch loss: {batch_loss.detach().item():0.10f}')
-        ## save images
-        if config.save_images_step and (step % config.save_images_step == 0 or step == config.num_steps - 1):
-            # generate data with the model to later visualize the learning process
-            edm.model.eval()
-            x_T = torch.randn([config.eval_batch_size, config.channels, config.img_size, config.img_size]).to(device).float()
-            sample = edm_sampler(edm, x_T, num_steps=config.total_steps).detach().cpu()
-            if config.dataset == 'Oxford_flower' or "Scene":
-                mean=torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
-                std=torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
-                save_image((sample*std+mean).clamp(0, 1),f'{sample_dir}/image_{step}.png')
-            else:
-                save_image((sample/2+0.5).clamp(0, 1), f'{sample_dir}/image_{step}.png')
-            edm.model.train()
-        ## save model
-        if config.save_model_iters and (step % config.save_model_iters == 0 or step == config.num_steps - 1) and step > 0:
-            # torch.save(edm.model.state_dict(), f"{ckpt_dir}/model_{step}.pth")
-            torch.save(edm.ema.state_dict(), f"{ckpt_dir}/ema_{step}.pth")
+
+    if config.infer:
+        edm.model.eval()
+        x_T = torch.randn([config.eval_batch_size, config.channels, config.img_size, config.img_size]).to(device).float()
+        sample = edm_sampler(edm, x_T, num_steps=config.total_steps).detach().cpu()
+        if config.dataset == 'Oxford_flower' or "Scene":
+            mean=torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+            std=torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+            save_image((sample*std+mean).clamp(0, 1),f'{sample_dir}/image_test.png')
+        else:
+            save_image((sample/2+0.5).clamp(0, 1), f'{sample_dir}/image_test.png')
+        edm.model.train()
+
+    else:
+        for step in range(config.num_steps):
+            optimizer.zero_grad()
+            batch_loss = torch.tensor(0.0, device=device)
+            # accumulation steps
+            for _ in range(config.accumulation_steps):
+                try:
+                    batch, label_dic = next(data_iterator)
+                except:
+                    data_iterator = iter(dataloader)
+                    batch, label_dic = next(data_iterator)
+                batch = batch.to(device)
+                loss = edm.train_step(batch)
+                loss /= (config.accumulation_steps)
+                loss.backward()
+                batch_loss += loss
+            # Update weights.
+            for g in optimizer.param_groups:
+                g['lr'] = config.learning_rate * min(step / config.warmup, 1)
+            for param in unet.parameters():
+                if param.grad is not None:
+                    torch.nan_to_num(param.grad, nan=0, posinf=1e5, neginf=-1e5, out=param.grad)
+            optimizer.step()
+            train_loss_values += (batch_loss.detach().item())
+            ## Update EMA.
+            edm.update_ema()
+            ## Update state
+            if config.train_progress_bar:
+                logs = {"loss": loss.detach().item()}
+                progress_bar.update(1) 
+                progress_bar.set_postfix(**logs)
+            ## log
+            if step % config.log_step == 0 or step == config.num_steps - 1:
+                current_lr = optimizer.param_groups[0]['lr']
+                logger.info(f'step: {step:08d}, current lr: {current_lr:0.6f} average loss: {train_loss_values/(step+1):0.10f}; batch loss: {batch_loss.detach().item():0.10f}')
+            ## save images
+            if config.save_images_step and (step % config.save_images_step == 0 or step == config.num_steps - 1):
+                # generate data with the model to later visualize the learning process
+                edm.model.eval()
+                x_T = torch.randn([config.eval_batch_size, config.channels, config.img_size, config.img_size]).to(device).float()
+                sample = edm_sampler(edm, x_T, num_steps=config.total_steps).detach().cpu()
+                if config.dataset == 'Oxford_flower' or "Scene":
+                    mean=torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+                    std=torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+                    save_image((sample*std+mean).clamp(0, 1),f'{sample_dir}/image_{step}.png')
+                else:
+                    save_image((sample/2+0.5).clamp(0, 1), f'{sample_dir}/image_{step}.png')
+                edm.model.train()
+            ## save model
+            if config.save_model_iters and (step % config.save_model_iters == 0 or step == config.num_steps - 1) and step > 0:
+                # torch.save(edm.model.state_dict(), f"{ckpt_dir}/model_{step}.pth")
+                torch.save(edm.ema.state_dict(), f"{ckpt_dir}/ema_{step}.pth")
